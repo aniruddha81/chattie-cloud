@@ -1,0 +1,9 @@
+/bin/
+*.exe
+.env
+
+# Terraform: downloaded providers, and state files (they contain passwords)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars

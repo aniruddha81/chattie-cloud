@@ -1,0 +1,14 @@
+#!/bin/bash
+# First-boot script for the data VM: Postgres and Redis in Docker.
+# The firewall only lets the app VMs reach these ports.
+# Log: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+apt-get update
+apt-get -o DPkg::Lock::Timeout=300 install -y docker.io
+
+docker run -d --name postgres --restart always -p 5432:5432 \
+  -e POSTGRES_USER=chattie -e POSTGRES_PASSWORD=${db_password} -e POSTGRES_DB=chattie \
+  -v pgdata:/var/lib/postgresql postgres:18-alpine
+
+docker run -d --name redis --restart always -p 6379:6379 redis:8-alpine

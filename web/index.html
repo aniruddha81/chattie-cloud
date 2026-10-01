@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chattie</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <form id="login" hidden>
+    <h1>Chattie</h1>
+    <input id="username" placeholder="username" autocomplete="username" required>
+    <input id="password" type="password" placeholder="password (8+ characters)" autocomplete="current-password" required>
+    <div class="row">
+      <button value="login">Sign in</button>
+      <button value="register" class="quiet">Create account</button>
+    </div>
+    <p id="login-error" class="error"></p>
+  </form>
+
+  <div id="app" hidden>
+    <aside>
+      <header>
+        <strong id="me"></strong>
+        <button id="logout" class="quiet">Sign out</button>
+      </header>
+      <small id="status">connecting…</small>
+      <h2>Rooms</h2>
+      <ul id="rooms"></ul>
+      <form id="new-room">
+        <input id="room-name" placeholder="new room" maxlength="30" required>
+      </form>
+      <h2>Online</h2>
+      <ul id="online"></ul>
+    </aside>
+    <main>
+      <header>
+        <strong id="title"></strong>
+        <span>
+          <button id="leave" class="quiet" hidden>Leave</button>
+          <button id="delete" class="quiet" hidden>Delete</button>
+        </span>
+      </header>
+      <ol id="messages"></ol>
+      <small id="typing"></small>
+      <form id="composer">
+        <input id="draft" placeholder="Message" autocomplete="off" maxlength="4000">
+        <button>Send</button>
+      </form>
+    </main>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

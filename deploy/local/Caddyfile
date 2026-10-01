@@ -1,0 +1,10 @@
+# Stands in for the cloud load balancer: spreads requests and WebSockets
+# across the instances and skips any instance whose /readyz fails.
+:8080 {
+	reverse_proxy app1:8080 app2:8080 app3:8080 {
+		lb_policy round_robin
+		lb_try_duration 5s
+		health_uri /readyz
+		health_interval 2s
+	}
+}

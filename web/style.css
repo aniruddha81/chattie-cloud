@@ -1,0 +1,79 @@
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#ffffff, #16181d);
+  --panel: light-dark(#f3f4f6, #1e2128);
+  --line: light-dark(#dcdfe4, #30343d);
+  --text: light-dark(#1b1d21, #e6e8eb);
+  --muted: light-dark(#6b7280, #9299a5);
+  --accent: light-dark(#2563eb, #6ea0ff);
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  height: 100dvh;
+  font: 15px/1.45 system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+input, button {
+  font: inherit;
+  color: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+button { cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; }
+button.quiet { background: none; border-color: var(--line); color: var(--muted); }
+h2 { margin: 16px 0 4px; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+ul, ol { list-style: none; margin: 0; padding: 0; }
+small { color: var(--muted); }
+.error { color: #dc2626; min-height: 1.4em; margin: 0; }
+.row { display: flex; gap: 8px; }
+
+#login {
+  max-width: 320px;
+  margin: 15vh auto 0;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#app { display: flex; height: 100%; }
+
+aside {
+  width: 230px;
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+aside input { width: 100%; margin-top: 6px; }
+aside li { padding: 4px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; }
+aside li:hover { background: var(--line); }
+aside li.active { background: var(--accent); color: #fff; }
+aside li.unread { font-weight: 700; }
+aside li.other { color: var(--muted); }
+
+header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px; gap: 8px; }
+#messages { flex: 1; overflow-y: auto; }
+#messages li { padding: 3px 0; overflow-wrap: anywhere; }
+#messages b { margin-right: 6px; }
+#messages time { margin-right: 6px; color: var(--muted); font-size: 12px; }
+#messages .pending { opacity: 0.5; }
+#messages .failed { color: #dc2626; }
+#typing { min-height: 1.4em; }
+#composer { display: flex; gap: 8px; }
+#composer input { flex: 1; }
+
+@media (max-width: 600px) {
+  #app { flex-direction: column; }
+  aside { width: auto; max-height: 35dvh; border-right: 0; border-bottom: 1px solid var(--line); }
+}

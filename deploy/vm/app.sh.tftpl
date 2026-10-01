@@ -1,0 +1,30 @@
+#!/bin/bash
+# First-boot script for an app VM. Both clouds run this as VM user data.
+# It installs Docker, pulls the chattie image that GitHub Actions built, and
+# runs two containers from it: the chat instance (serve) and the outbox
+# publisher.
+# Log: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+apt-get update
+apt-get -o DPkg::Lock::Timeout=300 install -y docker.io
+
+docker pull ${image}
+
+cat > /etc/chattie.env <<'EOF'
+DATABASE_URL=${database_url}
+REDIS_URL=${redis_url}
+SESSION_SECRET=${session_secret}
+DRAIN_SECONDS=10
+EOF
+chmod 600 /etc/chattie.env
+
+# --restart always brings a container back after a crash or a VM reboot. It
+# also covers boot order: the app retries until the data VM is ready.
+docker run -d --name chattie --restart always --stop-timeout 30 \
+  --env-file /etc/chattie.env -e INSTANCE_ID="$(hostname)" \
+  -p 8080:8080 ${image} serve
+
+docker run -d --name chattie-publisher --restart always \
+  --env-file /etc/chattie.env -e INSTANCE_ID="$(hostname)" \
+  ${image} publisher

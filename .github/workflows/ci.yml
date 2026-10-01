@@ -1,0 +1,62 @@
+# Tests every push and pull request. On main, also builds the Docker image and
+# publishes it to GitHub's container registry, where the cloud VMs pull it from.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Vet and build
+        run: |
+          go vet ./...
+          go vet -tags integration ./tests/...
+          go build ./...
+
+      # The same stack as local development: 3 instances, publisher, proxy,
+      # Postgres and Redis, built from this commit.
+      - name: Start the stack
+        run: |
+          docker compose -f deploy/local/compose.yaml up --build -d
+          for port in 8081 8082 8083; do
+            curl -fsS --retry 30 --retry-delay 1 --retry-all-errors http://localhost:$port/readyz
+          done
+
+      - name: Integration and failure tests
+        run: FAILURE_TESTS=1 go test -tags integration -count=1 -v ./tests/integration/
+
+      - name: Show container logs
+        if: failure()
+        run: docker compose -f deploy/local/compose.yaml logs --tail 100
+
+  image:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two tags: "latest", and the short commit ID so a specific version can
+      # be deployed. Registry names must be lowercase.
+      - name: Build and push the image
+        run: |
+          image=ghcr.io/${GITHUB_REPOSITORY,,}
+          tag=${GITHUB_SHA::7}
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker build -t "$image:latest" -t "$image:$tag" .
+          docker push --all-tags "$image"
+          echo "Published \`$image:$tag\` (also tagged \`latest\`)" >> "$GITHUB_STEP_SUMMARY"
