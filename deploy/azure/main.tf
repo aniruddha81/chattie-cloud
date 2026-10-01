@@ -14,8 +14,14 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
   subscription_id = var.subscription_id
+  features {
+    # Let destroy remove the whole resource group even if something inside it
+    # was not created by Terraform, so nothing is left behind to bill.
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+  }
 }
 
 variable "subscription_id" {
