@@ -14,6 +14,14 @@ import (
 
 var usernameRE = regexp.MustCompile(`^[a-z0-9_]{3,20}$`)
 
+// After this many failed sign-ins for one username, further attempts are
+// refused until the window (see bus.LoginFailed) ends.
+const maxLoginFailures = 10
+
+// dummyHash is checked when the username does not exist, so a sign-in takes
+// the same time whether or not the account is real.
+var dummyHash, _ = auth.HashPassword("no such account")
+
 type credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -72,15 +80,33 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	u, hash, err := s.store.UserByUsername(r.Context(), strings.ToLower(strings.TrimSpace(in.Username)))
+	ctx := r.Context()
+	name := strings.ToLower(strings.TrimSpace(in.Username))
+	if !usernameRE.MatchString(name) {
+		httpError(w, http.StatusUnauthorized, "wrong username or password")
+		return
+	}
+	// Throttling is best effort: if Redis is down, sign-in still works.
+	if failures, _ := s.bus.LoginFailures(ctx, name); failures >= maxLoginFailures {
+		httpError(w, http.StatusTooManyRequests, "too many failed sign-ins, try again in 15 minutes")
+		return
+	}
+
+	u, hash, err := s.store.UserByUsername(ctx, name)
+	found := err == nil
 	if err != nil && !errors.Is(err, postgres.ErrNotFound) {
 		fail(w, err)
 		return
 	}
-	if err != nil || !auth.CheckPassword(hash, in.Password) {
+	if !found {
+		hash = dummyHash
+	}
+	if !auth.CheckPassword(hash, in.Password) || !found {
+		s.bus.LoginFailed(ctx, name)
 		httpError(w, http.StatusUnauthorized, "wrong username or password")
 		return
 	}
+	s.bus.LoginSucceeded(ctx, name)
 	s.startSession(w, r, u, http.StatusOK)
 }
 

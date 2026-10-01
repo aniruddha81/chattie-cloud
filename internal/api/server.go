@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,33 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /", http.FileServerFS(web.Files))
 
 	// Rejects state-changing requests that come from another site (CSRF).
-	return http.NewCrossOriginProtection().Handler(mux)
+	return s.secure(http.NewCrossOriginProtection().Handler(mux))
+}
+
+// A plain host name with an optional port, safe to copy into a header.
+var hostRE = regexp.MustCompile(`^[a-zA-Z0-9.-]+(:[0-9]+)?$`)
+
+// secure adds headers that limit what a browser lets the page do. The content
+// policy allows scripts, styles and connections only from this site, so text
+// that someone injects into the page cannot run or send data elsewhere.
+func (s *Server) secure(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connect := "'self'"
+		if hostRE.MatchString(r.Host) {
+			// Older browsers do not count a WebSocket to this site as 'self'.
+			connect += " ws://" + r.Host + " wss://" + r.Host
+		}
+		h := w.Header()
+		h.Set("Content-Security-Policy", "default-src 'self'; connect-src "+connect+
+			"; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("X-Content-Type-Options", "nosniff") // do not guess file types
+		h.Set("X-Frame-Options", "DENY")           // do not load inside another site
+		h.Set("Referrer-Policy", "no-referrer")
+		if s.cfg.CookieSecure {
+			h.Set("Strict-Transport-Security", "max-age=31536000") // always use HTTPS
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Run serves until ctx is cancelled, then drains: it fails readiness so the

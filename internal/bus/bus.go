@@ -7,6 +7,7 @@ package bus
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -106,4 +107,36 @@ func (b *Bus) Online(ctx context.Context) ([]string, error) {
 	}
 	slices.Sort(names)
 	return slices.Compact(names), nil
+}
+
+// Failed sign-ins are counted per username in Redis, so the limit is shared
+// by every instance. The count resets when its window ends.
+
+const loginWindow = 15 * time.Minute
+
+func loginKey(username string) string { return "chattie:login-failures:" + username }
+
+// LoginFailures returns how many sign-ins failed for a username in the
+// current window.
+func (b *Bus) LoginFailures(ctx context.Context, username string) (int64, error) {
+	n, err := b.rdb.Get(ctx, loginKey(username)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return n, err
+}
+
+// LoginFailed counts one failed sign-in. The first failure starts the window.
+func (b *Bus) LoginFailed(ctx context.Context, username string) error {
+	_, err := b.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.Incr(ctx, loginKey(username))
+		p.ExpireNX(ctx, loginKey(username), loginWindow)
+		return nil
+	})
+	return err
+}
+
+// LoginSucceeded clears the count.
+func (b *Bus) LoginSucceeded(ctx context.Context, username string) error {
+	return b.rdb.Del(ctx, loginKey(username)).Err()
 }

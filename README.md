@@ -61,22 +61,52 @@ a `resync` notice, or see a newer sequence in a heartbeat. Retries reuse the
 | `deploy/aws`, `deploy/azure` | Terraform for each cloud |
 | `deploy/vm` | First-boot scripts the cloud VMs run |
 | `tests/integration` | Tests that run against the live stack |
+| `tests/load` | Load generator that measures latency |
 
 ## Tests
 
-With the stack running:
+Unit tests need nothing running:
+
+```
+go test ./...
+```
+
+Integration tests run against the live stack:
 
 ```
 go test -tags integration ./tests/integration/
 ```
 
-Tests that stop containers (for example a Redis outage) are opt-in:
+Failure tests stop containers, so they are opt-in. They cover a Redis outage,
+an instance killed while messages are in flight, and a stopped publisher:
 
 ```
-FAILURE_TESTS=1 go test -tags integration -run Outage ./tests/integration/
+FAILURE_TESTS=1 go test -tags integration ./tests/integration/
 ```
 
 In PowerShell, set the variable first: `$env:FAILURE_TESTS = "1"`.
+
+## Load test
+
+```
+go run ./tests/load -urls http://localhost:8081,http://localhost:8082 -clients 50 -duration 30s
+```
+
+It signs up the clients, spreads them over the instances in rooms of ten,
+sends at a steady rate and prints how many messages were delivered and the
+latency percentiles. Point `-urls` at a cloud deployment to measure real VMs.
+
+## Security
+
+- Passwords are hashed with bcrypt. Ten failed sign-ins lock a username for 15
+  minutes on every instance.
+- Sessions are HttpOnly cookies: a 15-minute access token and a refresh token
+  that works once.
+- State-changing requests from other sites are rejected, and every response
+  sets a content security policy that allows scripts and connections only
+  from the site itself.
+- Not included: HTTPS (it belongs to the load balancer), password reset and
+  email verification.
 
 ## Configuration
 

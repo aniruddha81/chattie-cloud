@@ -18,11 +18,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Vet and build
+      - name: Vet, build and unit tests
         run: |
           go vet ./...
           go vet -tags integration ./tests/...
           go build ./...
+          go test ./...
 
       # The same stack as local development: 3 instances, publisher, proxy,
       # Postgres and Redis, built from this commit.

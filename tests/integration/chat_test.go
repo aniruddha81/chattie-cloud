@@ -325,3 +325,50 @@ func TestRefreshTokenRotation(t *testing.T) {
 	// The reuse revoked the family, so the newer token is dead too.
 	alice.must(http.StatusUnauthorized, instances[1], "POST", "/api/auth/refresh", nil, nil)
 }
+
+// Scrolling back: "before" returns the messages just older than a sequence.
+func TestOlderHistory(t *testing.T) {
+	alice := newUser(t)
+	room := alice.createRoom()
+	a := alice.dial(instances[0])
+	for i := range 5 {
+		id := newUUID()
+		a.send(room, id, fmt.Sprintf("message %d", i+1))
+		a.waitAck(id)
+	}
+
+	var msgs []message
+	alice.must(http.StatusOK, instances[1], "GET", fmt.Sprintf("/api/rooms/%d/messages?before=4&limit=2", room), nil, &msgs)
+	if len(msgs) != 2 || msgs[0].Sequence != 2 || msgs[1].Sequence != 3 {
+		t.Fatalf("before=4 limit=2 returned %+v, want sequences 2 and 3", msgs)
+	}
+}
+
+// Repeated wrong passwords lock the username for a while, on every instance,
+// and even the right password is refused during the lock.
+func TestLoginThrottle(t *testing.T) {
+	alice := newUser(t)
+	guesser := &user{t: t, http: &http.Client{Timeout: 10 * time.Second}}
+	wrong := map[string]string{"username": alice.name, "password": "wrong guess"}
+	right := map[string]string{"username": alice.name, "password": "correct horse"}
+
+	for i := range 10 {
+		guesser.must(http.StatusUnauthorized, instances[i%2], "POST", "/api/auth/login", wrong, nil)
+	}
+	guesser.must(http.StatusTooManyRequests, instances[0], "POST", "/api/auth/login", wrong, nil)
+	guesser.must(http.StatusTooManyRequests, instances[1], "POST", "/api/auth/login", right, nil)
+}
+
+// Every response carries the headers that restrict what the page may do.
+func TestSecurityHeaders(t *testing.T) {
+	res, err := http.Get(instances[0] + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	for _, name := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"} {
+		if res.Header.Get(name) == "" {
+			t.Errorf("missing header %s", name)
+		}
+	}
+}

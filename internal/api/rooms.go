@@ -84,8 +84,11 @@ func (s *Server) openDM(w http.ResponseWriter, r *http.Request, u model.User) {
 
 // listMessages returns room history to members only.
 //
-//	?after=<sequence>  messages newer than the cursor, oldest first (catch-up)
-//	(no after)         the newest messages, oldest first (first load)
+//	?after=<sequence>   messages newer than the cursor (catch-up)
+//	?before=<sequence>  the messages just older than the cursor (scroll back)
+//	(neither)           the newest messages (first load)
+//
+// Every form returns messages oldest first.
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, u model.User) {
 	id, ok := roomID(w, r)
 	if !ok {
@@ -106,15 +109,22 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, u model.Us
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
-	var msgs []model.Message
-	if query.Has("after") {
-		after, err := strconv.ParseInt(query.Get("after"), 10, 64)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "after must be a sequence number")
-			return
+	var cursor int64
+	for _, name := range []string{"after", "before"} {
+		if query.Has(name) {
+			if cursor, err = strconv.ParseInt(query.Get(name), 10, 64); err != nil {
+				httpError(w, http.StatusBadRequest, name+" must be a sequence number")
+				return
+			}
 		}
-		msgs, err = s.store.MessagesAfter(r.Context(), id, after, limit)
-	} else {
+	}
+	var msgs []model.Message
+	switch {
+	case query.Has("after"):
+		msgs, err = s.store.MessagesAfter(r.Context(), id, cursor, limit)
+	case query.Has("before"):
+		msgs, err = s.store.MessagesBefore(r.Context(), id, cursor, limit)
+	default:
 		msgs, err = s.store.LatestMessages(r.Context(), id, limit)
 	}
 	if err != nil {

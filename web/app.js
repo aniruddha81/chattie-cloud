@@ -11,11 +11,12 @@ let me = null;       // signed-in user, or null
 let ws = null;
 let rooms = [];      // from GET /api/rooms
 let active = null;   // id of the room on screen
+let shown = null;    // id of the room the message list was last drawn for
 let attempts = 0;    // failed connection attempts, for backoff
 let watchdog = null; // closes a socket that went silent
 let lastTyping = 0;
 
-const chats = new Map();   // room id -> { msgs: Map(id -> message), seqs: Set, last, loaded, busy, again, unread }
+const chats = new Map();   // room id -> { msgs: Map(id -> message), seqs: Set, first, last, loaded, busy, again, unread }
 const pending = new Map(); // client_message_id -> { room_id, content, failed }
 const typers = new Map();  // username -> timer that clears "is typing"
 
@@ -149,7 +150,8 @@ function onFrame(f) {
 // ---------- rooms and history ----------
 
 function chat(id) {
-  if (!chats.has(id)) chats.set(id, { msgs: new Map(), seqs: new Set(), last: 0, loaded: false, busy: false, again: false, unread: false });
+  // first: the oldest sequence loaded. last: the newest with nothing missing before it.
+  if (!chats.has(id)) chats.set(id, { msgs: new Map(), seqs: new Set(), first: Infinity, last: 0, loaded: false, busy: false, again: false, unread: false });
   return chats.get(id);
 }
 
@@ -196,24 +198,39 @@ async function catchUp(id) {
   } finally {
     c.busy = false;
   }
+  if (id === active) showMessages();
+}
+
+// loadOlder fetches the page of messages before the oldest one loaded.
+async function loadOlder() {
+  const id = active;
+  const page = await api('GET', `/api/rooms/${id}/messages?before=${chat(id).first}&limit=50`);
+  page.forEach((m) => merge(m, false));
+  if (id !== active) return;
+  const box = $('messages');
+  const height = box.scrollHeight;
+  showMessages();
+  box.scrollTop += box.scrollHeight - height; // keep the same messages in view
 }
 
 // merge adds a message once (delivery may repeat) and advances `last` while
 // the sequences are contiguous. A live message beyond `last + 1` reveals a gap.
+// Live messages are drawn at once; callers that merge a whole page draw after.
 function merge(m, live) {
   const c = chat(m.room_id);
   if (m.sender_id === me.id) pending.delete(m.client_message_id);
   if (!c.msgs.has(m.id)) {
     c.msgs.set(m.id, m);
     c.seqs.add(m.sequence);
+    c.first = Math.min(c.first, m.sequence);
     while (c.seqs.has(c.last + 1)) c.last++;
-    if (m.room_id !== active && c.loaded) {
+    if (m.room_id !== active && c.loaded && !c.unread) {
       c.unread = true;
       showRooms();
     }
   }
   if (live && m.sequence > c.last) catchUp(m.room_id).catch(console.warn);
-  if (m.room_id === active) showMessages();
+  if (live && m.room_id === active) showMessages();
 }
 
 // ---------- sending ----------
@@ -307,9 +324,25 @@ function showMessages() {
   $('leave').hidden = !room || room.kind !== 'public' || room.owner;
   $('delete').hidden = !room?.owner;
 
-  const rows = room ? [...chat(active).msgs.values()].sort((a, b) => a.sequence - b.sequence) : [];
+  const c = room ? chat(active) : null;
+  const rows = room ? [...c.msgs.values()].sort((a, b) => a.sequence - b.sequence) : [];
   const waiting = [...pending.values()].filter((p) => p.room_id === active);
-  $('messages').replaceChildren(
+
+  // Sequences start at 1, so anything above that means older messages exist.
+  const older = [];
+  if (c?.loaded && c.first > 1 && c.first !== Infinity) {
+    const li = el('li', 'Load older messages', 'older');
+    li.onclick = () => loadOlder().catch((err) => alert(err.message));
+    older.push(li);
+  }
+
+  // Follow new messages only if the reader is already at the bottom.
+  const box = $('messages');
+  const follow = shown !== active || box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  shown = active;
+
+  box.replaceChildren(
+    ...older,
     ...rows.map((m) => {
       const li = el('li');
       const time = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -322,7 +355,7 @@ function showMessages() {
       return li;
     }),
   );
-  $('messages').scrollTop = $('messages').scrollHeight;
+  if (follow) box.scrollTop = box.scrollHeight;
 }
 
 function showOnline(names) {

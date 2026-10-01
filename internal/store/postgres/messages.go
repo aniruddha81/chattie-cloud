@@ -65,6 +65,14 @@ func (s *Store) MessagesAfter(ctx context.Context, roomID, after int64, limit in
 	return s.messages(ctx, `WHERE m.room_id = $1 AND m.sequence > $2 ORDER BY m.sequence LIMIT $3`, roomID, after, limit)
 }
 
+// MessagesBefore returns the messages just older than a sequence, oldest
+// first. Clients use it to scroll back through history.
+func (s *Store) MessagesBefore(ctx context.Context, roomID, before int64, limit int) ([]model.Message, error) {
+	msgs, err := s.messages(ctx, `WHERE m.room_id = $1 AND m.sequence < $2 ORDER BY m.sequence DESC LIMIT $3`, roomID, before, limit)
+	slices.Reverse(msgs)
+	return msgs, err
+}
+
 // LatestMessages returns the newest messages of a room, oldest first.
 func (s *Store) LatestMessages(ctx context.Context, roomID int64, limit int) ([]model.Message, error) {
 	msgs, err := s.messages(ctx, `WHERE m.room_id = $1 ORDER BY m.sequence DESC LIMIT $2`, roomID, limit)
