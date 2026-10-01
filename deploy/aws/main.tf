@@ -1,8 +1,10 @@
-# Chattie on AWS: a load balancer, app VMs and one data VM.
+# Chattie on AWS: a load balancer, app VMs, a managed Postgres database (RDS)
+# and one small VM for Redis.
 #
-#   internet -> load balancer :80 -> app VMs :8080 -> data VM (Postgres, Redis)
+#   internet -> load balancer :80 -> app VMs :8080 -> RDS Postgres
+#                                                  -> Redis VM
 #
-# A learning setup: plain HTTP, and the database lives on a VM disk.
+# A learning setup: plain HTTP, and destroy deletes the database.
 
 terraform {
   required_providers {
@@ -27,6 +29,11 @@ variable "app_count" {
 variable "image" {
   description = "The image GitHub Actions published. Use a commit tag instead of latest to deploy a specific version."
   default     = "ghcr.io/aniruddha81/chattie-cloud:latest"
+}
+
+variable "backup_days" {
+  description = "How many days of automatic database backups to keep. 0 turns them off."
+  default     = 1
 }
 
 # ---------- network ----------
@@ -69,6 +76,16 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# The database gets its own subnets with no route to the internet. RDS asks
+# for two zones even when it runs in one.
+resource "aws_subnet" "private" {
+  count             = 2
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.${count.index + 10}.0/24"
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+  tags              = { Name = "chattie-db-${count.index + 1}" }
+}
+
 # ---------- firewall ----------
 # Each layer only accepts traffic from the layer in front of it.
 
@@ -106,8 +123,8 @@ resource "aws_security_group" "app" {
   }
 }
 
-resource "aws_security_group" "data" {
-  name   = "chattie-data"
+resource "aws_security_group" "db" {
+  name   = "chattie-db"
   vpc_id = aws_vpc.main.id
   ingress {
     from_port       = 5432
@@ -115,6 +132,11 @@ resource "aws_security_group" "data" {
     protocol        = "tcp"
     security_groups = [aws_security_group.app.id]
   }
+}
+
+resource "aws_security_group" "redis" {
+  name   = "chattie-redis"
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port       = 6379
     to_port         = 6379
@@ -155,15 +177,44 @@ resource "aws_iam_instance_profile" "vm" {
   role = aws_iam_role.vm.name
 }
 
-# ---------- VMs ----------
-
-data "aws_ssm_parameter" "ubuntu" {
-  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
-}
+# ---------- database ----------
 
 resource "random_password" "db" {
   length  = 32
   special = false
+}
+
+resource "aws_db_subnet_group" "main" {
+  name       = "chattie"
+  subnet_ids = aws_subnet.private[*].id
+}
+
+# Managed Postgres: AWS stores the data outside any VM, patches the server and
+# takes a backup every day. With no engine_version, AWS picks its current
+# default Postgres release.
+resource "aws_db_instance" "main" {
+  identifier              = "chattie"
+  engine                  = "postgres"
+  instance_class          = "db.t4g.micro"
+  allocated_storage       = 20
+  storage_type            = "gp3"
+  storage_encrypted       = true
+  db_name                 = "chattie"
+  username                = "chattie"
+  password                = random_password.db.result
+  db_subnet_group_name    = aws_db_subnet_group.main.name
+  vpc_security_group_ids  = [aws_security_group.db.id]
+  publicly_accessible     = false
+  backup_retention_period = var.backup_days
+  # Learning setup: let destroy remove the database without a last snapshot,
+  # so nothing is left behind to bill.
+  skip_final_snapshot = true
+}
+
+# ---------- VMs ----------
+
+data "aws_ssm_parameter" "ubuntu" {
+  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 resource "random_password" "session" {
@@ -171,14 +222,14 @@ resource "random_password" "session" {
   special = false
 }
 
-resource "aws_instance" "data" {
+resource "aws_instance" "redis" {
   ami                    = data.aws_ssm_parameter.ubuntu.insecure_value
-  instance_type          = "t3.small"
+  instance_type          = "t3.micro"
   subnet_id              = aws_subnet.public[0].id
-  vpc_security_group_ids = [aws_security_group.data.id]
+  vpc_security_group_ids = [aws_security_group.redis.id]
   iam_instance_profile   = aws_iam_instance_profile.vm.name
-  user_data              = templatefile("../vm/data.sh.tftpl", { db_password = random_password.db.result })
-  tags                   = { Name = "chattie-data" }
+  user_data              = file("../vm/redis.sh")
+  tags                   = { Name = "chattie-redis" }
 }
 
 resource "aws_instance" "app" {
@@ -192,8 +243,10 @@ resource "aws_instance" "app" {
   user_data_replace_on_change = true
   user_data = templatefile("../vm/app.sh.tftpl", {
     image          = var.image
-    database_url   = "postgres://chattie:${random_password.db.result}@${aws_instance.data.private_ip}:5432/chattie?sslmode=disable&pool_max_conns=10"
-    redis_url      = "redis://${aws_instance.data.private_ip}:6379"
+    db_host        = aws_db_instance.main.address
+    db_password    = random_password.db.result
+    db_pool        = 10 # connections per container; the database allows about 80 in total
+    redis_host     = aws_instance.redis.private_ip
     session_secret = random_password.session.result
   })
   tags = { Name = "chattie-app-${count.index + 1}" }

@@ -26,10 +26,10 @@ Contents:
 ## 1. What you are building
 
 ```text
-                       +--> app VM 1: chattie + chattie-publisher --+
-browser --> load       |                                            +--> data VM:
-            balancer --+                                            |    postgres + redis
-            (port 80)  +--> app VM 2: chattie + chattie-publisher --+
+                       +--> app VM 1: chattie + chattie-publisher --+--> managed Postgres
+browser --> load       |                                            |    (RDS / Azure Database)
+            balancer --+                                            |
+            (port 80)  +--> app VM 2: chattie + chattie-publisher --+--> Redis VM
 ```
 
 - **Load balancer.** The only thing reachable from the internet. It spreads
@@ -37,8 +37,12 @@ browser --> load       |                                            +--> data VM
 - **App VMs.** Each runs two Docker containers from the same image: `chattie`
   (HTTP, WebSocket, web page) and `chattie-publisher` (forwards committed
   events from Postgres to Redis).
-- **Data VM.** Runs the `postgres` and `redis` containers. Postgres holds
-  every message. Redis only carries live notifications between app VMs.
+- **Managed Postgres.** Holds every user and message. It is a cloud service,
+  not a VM: RDS on AWS, Azure Database for PostgreSQL on Azure. The cloud
+  stores the data outside any VM, patches the server and takes daily backups.
+  It has no public address and only accepts encrypted connections.
+- **Redis VM.** Runs the `redis` container. Redis only carries live
+  notifications between app VMs, so losing it loses no data.
 
 How the image gets there:
 
@@ -49,14 +53,16 @@ git push --> GitHub Actions: test, build image --> ghcr.io --> each app VM pulls
 Nothing is built on your machine. AWS and Azure are two separate copies of the
 system, each with its own users and messages.
 
-**Cost.** About 9 cents an hour on AWS and 8 cents an hour on Azure while the
-system is up (approximate), paid from your credits. After `destroy` it costs
+**Cost.** About 10 cents an hour on each cloud while the system is up
+(approximate), paid from your credits. After `destroy` it costs
 nothing.
 
 **This is a learning setup, not production.**
 
 - Plain HTTP, no HTTPS. Use throwaway passwords in the chat.
-- The database lives on the data VM's disk and is deleted with it.
+- `destroy` deletes the database and its backups. Nothing is kept.
+- The app encrypts its database connection but does not check the server's
+  certificate.
 - Terraform keeps a state file on your machine that contains the generated
   passwords. It is git-ignored. Do not share it.
 
@@ -260,7 +266,7 @@ terraform -chdir=deploy/aws init
 terraform -chdir=deploy/aws plan
 ```
 
-`plan` ends with `Plan: 23 to add, 0 to change, 0 to destroy.` Nothing exists
+`plan` ends with `Plan: 28 to add, 0 to change, 0 to destroy.` Nothing exists
 yet. Section 13 lists what each of those resources is.
 
 ### 6.4 Create it
@@ -269,11 +275,11 @@ yet. Section 13 lists what each of those resources is.
 terraform -chdir=deploy/aws apply
 ```
 
-Type `yes` when asked. It takes about four minutes, most of it the load
-balancer. It ends with:
+Type `yes` when asked. It takes about ten minutes, most of it waiting for the
+database. It ends with:
 
 ```text
-Apply complete! Resources: 23 added, 0 changed, 0 destroyed.
+Apply complete! Resources: 28 added, 0 changed, 0 destroyed.
 
 Outputs:
 
@@ -350,11 +356,20 @@ sudo docker logs -f chattie-publisher      # publisher log
 sudo cat /var/log/cloud-init-output.log    # what the first-boot script did
 ```
 
-On the data VM, look inside the database:
+The database is not on a VM, so there is nothing to log in to. Each app VM
+has a helper, `chattie-psql`, that runs a query against it:
 
 ```bash
-sudo docker exec -it postgres psql -U chattie -c "SELECT id, room_id, sequence, content FROM messages ORDER BY id DESC LIMIT 10"
-sudo docker exec -it postgres psql -U chattie -c "SELECT count(*) FILTER (WHERE published_at IS NULL) AS pending, count(*) AS total FROM outbox"
+sudo chattie-psql -c "SELECT id, room_id, sequence, content FROM messages ORDER BY id DESC LIMIT 10"
+sudo chattie-psql -c "SELECT count(*) FILTER (WHERE published_at IS NULL) AS pending, count(*) AS total FROM outbox"
+```
+
+The first run takes a little longer because it downloads the Postgres client.
+
+See the database itself, including its backup setting:
+
+```powershell
+aws rds describe-db-instances --db-instance-identifier chattie --query "DBInstances[0].{status:DBInstanceStatus, version:EngineVersion, size:DBInstanceClass, backupDays:BackupRetentionPeriod, public:PubliclyAccessible}" --output table
 ```
 
 ### 6.8 Check your credit
@@ -394,9 +409,12 @@ check that the two VM sizes the deployment uses are available in your region
 az vm list-skus --location eastus --size Standard_B1 --all --query "[].{size:name, blocked:restrictions[0].reasonCode}" -o table
 ```
 
-`Standard_B1s` and `Standard_B1ms` should appear with nothing in the
-`blocked` column. If one is blocked, pick another size from the list and set
-it in the next step.
+`Standard_B1s` should appear with nothing in the `blocked` column. If it is
+blocked, pick another size from the list and set it in the next step.
+
+The managed database can also be restricted by region. There is no quick
+check for it: if `apply` later refuses to create the database in your region,
+choose another allowed region (see section 11).
 
 ### 7.3 Write your settings
 
@@ -414,7 +432,7 @@ location        = "eastus"
 ```
 
 To use other VM sizes, add lines such as `app_size = "Standard_B2s"` or
-`data_size = "Standard_B2s"`.
+`redis_size = "Standard_B2s"`.
 
 ### 7.4 Create it
 
@@ -424,8 +442,8 @@ terraform -chdir=deploy/azure plan
 terraform -chdir=deploy/azure apply
 ```
 
-`plan` ends with `Plan: 27 to add`. Type `yes` for `apply`. It takes about
-five minutes and prints:
+`plan` ends with `Plan: 32 to add`. Type `yes` for `apply`. It takes about
+ten minutes, most of it waiting for the database, and prints:
 
 ```text
 url = "http://chattie-ab12cd.eastus.cloudapp.azure.com"
@@ -477,7 +495,20 @@ Then (each call takes about 30 seconds; commands run as root, so no `sudo`):
 onvm chattie-app-1 "docker ps"
 onvm chattie-app-1 "docker logs --tail 20 chattie"
 onvm chattie-app-1 "tail -n 30 /var/log/cloud-init-output.log"
-onvm chattie-data  "docker exec postgres psql -U chattie -c 'SELECT id, room_id, sequence, content FROM messages ORDER BY id DESC LIMIT 10'"
+onvm chattie-redis "docker ps"
+```
+
+The database is not on a VM. Each app VM has a helper, `chattie-psql`, that
+runs a query against it (the first run downloads the Postgres client):
+
+```powershell
+onvm chattie-app-1 "chattie-psql -c 'SELECT id, room_id, sequence, content FROM messages ORDER BY id DESC LIMIT 10'"
+```
+
+See the database itself:
+
+```powershell
+az postgres flexible-server list -g chattie --query "[].{name:name, state:state, version:version, size:sku.name, backupDays:backup.backupRetentionDays}" -o table
 ```
 
 ### 7.8 Check your credit
@@ -493,9 +524,10 @@ This is the point of the project. Keep two browser windows open on the chat,
 signed in as two users, ideally connected to different instances (the sidebar
 shows which; reload a window until they differ).
 
-The commands below are the ones to run **on a VM**. On AWS, type them in a
-Session Manager shell with `sudo` in front. On Azure, wrap them:
-`onvm chattie-app-1 "docker stop chattie"`.
+The commands in `bash` blocks are the ones to run **on a VM**. On AWS, type
+them in a Session Manager shell with `sudo` in front. On Azure, wrap them:
+`onvm chattie-app-1 "docker stop chattie"`. Commands in `powershell` blocks
+run on your own machine.
 
 ### 8.1 Messages cross VMs
 
@@ -530,10 +562,10 @@ docker stop chattie-publisher
 
 Send a message. The sender sees it, because it was saved in Postgres and
 acknowledged. The other user does not, because nobody is forwarding events to
-Redis. On the data VM, count the waiting events:
+Redis. On an app VM, count the waiting events:
 
 ```bash
-docker exec postgres psql -U chattie -c "SELECT count(*) FROM outbox WHERE published_at IS NULL"
+chattie-psql -c "SELECT count(*) FROM outbox WHERE published_at IS NULL"
 ```
 
 Start one publisher:
@@ -548,7 +580,7 @@ failure, but not lost.
 
 ### 8.4 Stop Redis
 
-On the data VM:
+On the Redis VM:
 
 ```bash
 docker stop redis
@@ -593,20 +625,71 @@ three minutes, `/readyz` shows three instance names. A later `apply` without
 `-var` goes back to two. To keep three, put `app_count = 3` in
 `deploy/aws/terraform.tfvars` (or the Azure one).
 
-### 8.7 Stop Postgres
+### 8.7 Restart the database
 
-On the data VM:
+AWS:
 
-```bash
-docker stop postgres
+```powershell
+aws rds reboot-db-instance --db-instance-identifier chattie --query "DBInstance.DBInstanceStatus"
 ```
 
-Now sending fails and both app VMs fail `/readyz`, so the load balancer has
-nowhere to send traffic. Postgres is the one part that everything depends on.
-Start it again:
+Azure:
+
+```powershell
+$db = az postgres flexible-server list -g chattie --query "[0].name" -o tsv
+az postgres flexible-server restart -g chattie -n $db
+```
+
+While the database is down, sending fails and both app VMs fail `/readyz`,
+so the load balancer has nowhere to send traffic. Postgres is the one part
+that everything depends on. Watch it come back:
+
+```powershell
+1..30 | ForEach-Object { curl.exe -s -o NUL -w "%{http_code} " "$url/readyz"; Start-Sleep 2 }
+```
+
+After a minute or so the answers return to `200` without anyone touching the
+app. The chat containers and the publishers reconnect on their own.
+
+### 8.8 Restore a backup (AWS, about 25 minutes)
+
+A backup you have never restored is only a hope. This takes a snapshot,
+restores it as a second database and checks the data is there.
+
+Take the snapshot:
+
+```powershell
+aws rds create-db-snapshot --db-instance-identifier chattie --db-snapshot-identifier chattie-test --query "DBSnapshot.Status"
+aws rds wait db-snapshot-available --db-snapshot-identifier chattie-test
+```
+
+Restore it as a new database next to the real one:
+
+```powershell
+$sg = aws ec2 describe-security-groups --filters "Name=group-name,Values=chattie-db" --query "SecurityGroups[0].GroupId" --output text
+aws rds restore-db-instance-from-db-snapshot --db-instance-identifier chattie-restored --db-snapshot-identifier chattie-test --db-instance-class db.t4g.micro --db-subnet-group-name chattie --vpc-security-group-ids $sg --no-publicly-accessible --query "DBInstance.DBInstanceStatus"
+aws rds wait db-instance-available --db-instance-identifier chattie-restored
+aws rds describe-db-instances --db-instance-identifier chattie-restored --query "DBInstances[0].Endpoint.Address" --output text
+```
+
+The last command prints the restored database's address. On an app VM, run
+the same counts against both databases and compare (put the address in place
+of `<address>`):
 
 ```bash
-docker start postgres
+sudo chattie-psql -tA -c "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM rooms), (SELECT count(*) FROM messages), (SELECT max(last_sequence) FROM rooms)"
+sudo DB_HOST=<address> chattie-psql -tA -c "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM rooms), (SELECT count(*) FROM messages), (SELECT max(last_sequence) FROM rooms)"
+```
+
+The numbers match, apart from anything sent after the snapshot.
+
+**Delete the copy and the snapshot.** Terraform did not create them, so
+`destroy` cannot remove them, and they would block it and keep billing:
+
+```powershell
+aws rds delete-db-instance --db-instance-identifier chattie-restored --skip-final-snapshot --delete-automated-backups --query "DBInstance.DBInstanceStatus"
+aws rds wait db-instance-deleted --db-instance-identifier chattie-restored
+aws rds delete-db-snapshot --db-snapshot-identifier chattie-test --query "DBSnapshot.Status"
 ```
 
 ---
@@ -636,7 +719,7 @@ docker start postgres
 
 Terraform replaces the app VMs with new ones that pull the new image. They are
 replaced together, so the chat is unreachable for a few minutes. Messages are
-safe in Postgres on the data VM, which is not touched.
+safe in the managed database, which is not touched.
 
 A later `apply` without `-var image=...` would go back to `latest`. To make a
 version stick, put it in `terraform.tfvars`:
@@ -659,13 +742,16 @@ terraform -chdir=deploy/aws destroy
 terraform -chdir=deploy/azure destroy
 ```
 
-Type `yes`. Everything is deleted, including the database.
+Type `yes`. Everything is deleted, including the database and its backups.
+It takes about ten minutes, most of it the database.
 
-Confirm nothing is left on AWS. Both commands should print `[]`:
+Confirm nothing is left on AWS. All four commands should print `[]`:
 
 ```powershell
 aws ec2 describe-instances --filters "Name=tag:Name,Values=chattie-*" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId"
 aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerName"
+aws rds describe-db-instances --query "DBInstances[].DBInstanceIdentifier"
+aws rds describe-db-snapshots --snapshot-type manual --query "DBSnapshots[].DBSnapshotIdentifier"
 ```
 
 Confirm nothing is left on Azure. This should print `false`:
@@ -681,7 +767,7 @@ Look at the billing page of each cloud the next day to confirm the cost
 stopped growing.
 
 **About the credits.** Left running all day, this system would use the AWS
-credit in about 90 days and the Azure credit in about 43. Neither cloud
+credit in about 80 days and the Azure credit in about 37. Neither cloud
 charges a card when credit runs out: AWS closes a free-plan account and Azure
 disables the subscription. Destroy when you are not using it and the credits
 will easily outlast your learning.
@@ -699,11 +785,14 @@ will easily outlast your learning.
 | `502` or `503` for more than six minutes after `apply` | The first-boot script failed. Read `/var/log/cloud-init-output.log` on an app VM (6.7 or 7.7). |
 | That log ends with `docker pull` and `denied` or `unauthorized` | The image is still private. Do 3.4, then replace the VMs (see below). |
 | That log ends with `manifest unknown` | The image tag does not exist. Check the tag in the Actions run summary. |
-| `/readyz` says `postgres unavailable` | The data VM is still starting, or its Postgres container stopped. Check `docker ps` on the data VM. |
+| `/readyz` says `postgres unavailable` | The database is restarting or not ready yet. Check its status with the `describe-db-instances` command in 6.7 or the `flexible-server list` command in 7.7. |
+| AWS: `backup retention period exceeds the maximum available to free tier customers` | Your account may not keep backups. Apply with `-var backup_days=0`. Experiment 8.8 still works, because it takes its own snapshot. |
+| AWS: `destroy` fails on the subnet group or security group | A restored database from experiment 8.8 still exists. Run the delete commands at the end of 8.8, then `destroy` again. |
+| Azure: the database fails with a message that the location or subscription is restricted | The database service is not offered to your subscription in that region. Change `location` to another allowed region, run `destroy`, then `apply`. |
 | AWS: `VcpuLimitExceeded` | Your account allows fewer VMs. Use `-var app_count=1`. |
 | AWS: `InvalidClientTokenId` or `AuthFailure` | The access key is wrong. Run `aws configure` again. |
 | Azure: `RequestDisallowedByAzure` or `not allowed by policy` | The region is not allowed for your subscription. Change `location` (7.2). |
-| Azure: `SkuNotAvailable` | The VM size is not offered there. Set `app_size` or `data_size` (7.3). |
+| Azure: `SkuNotAvailable` | The VM size is not offered there. Set `app_size` or `redis_size` (7.3). |
 | Azure: `apply` is slow the first time | Terraform is registering resource providers on a new subscription. Let it finish. |
 | `Error acquiring the state lock` | A previous Terraform run was interrupted. Run `terraform -chdir=<folder> force-unlock <ID>` with the ID from the message. |
 | Session Manager lists no instances | The VM's agent needs two minutes after boot. Refresh. |
@@ -750,11 +839,13 @@ If a `destroy` fails halfway, run it again. It continues where it stopped.
 
 | Resource | Purpose |
 | --- | --- |
-| VPC, internet gateway, 2 subnets, route table | A private network in two zones with a way out to the internet |
-| 3 security groups | Firewalls. Load balancer: port 80 from anyone. App: 8080 from the load balancer only. Data: 5432 and 6379 from the app VMs only |
+| VPC, internet gateway, 2 public subnets, route table | A private network in two zones with a way out to the internet |
+| 2 private subnets, DB subnet group | Where the database lives. They have no route to the internet |
+| 4 security groups | Firewalls. Load balancer: port 80 from anyone. App: 8080 from the load balancer only. Database: 5432 from the app VMs only. Redis: 6379 from the app VMs only |
 | IAM role and instance profile | Lets you open a Session Manager shell on the VMs |
 | 2 random passwords | The database password and the secret that signs login cookies |
-| 1 data VM (`t3.small`) | Postgres and Redis containers |
+| RDS database (`db.t4g.micro`, 20 GB) | Managed Postgres: encrypted storage, daily backups, no public address |
+| 1 Redis VM (`t3.micro`) | Redis container |
 | 2 app VMs (`t3.micro`) | `chattie` and `chattie-publisher` containers |
 | Load balancer, target group, listener | Receives port 80 and forwards to healthy app VMs on 8080 |
 
@@ -763,23 +854,26 @@ If a `destroy` fails halfway, run it again. It continues where it stopped.
 | Resource | Purpose |
 | --- | --- |
 | Resource group | A folder that holds everything, so it can be deleted together |
-| Virtual network, subnet | The private network |
-| Network security group | Firewall. Only port 8080 is open to the internet; Postgres and Redis are reachable only inside the network |
+| Virtual network, VM subnet | The private network |
+| Database subnet, private DNS zone and link | A subnet reserved for the database, and a private name so the VMs can find it |
+| Network security group | Firewall. Only port 8080 is open to the internet; Redis is reachable only inside the network |
 | Public IP with a DNS name | The address of the load balancer |
 | Load balancer, 2 pools, probe, rule, outbound rule | Forwards port 80 to healthy app VMs on 8080, and gives the VMs a way out to the internet |
-| 3 network interfaces | One per VM. The data VM has the fixed address `10.1.0.10` |
+| 3 network interfaces | One per VM. The Redis VM has the fixed address `10.1.0.10` |
 | 2 random passwords, 1 key | Database password, cookie secret, and the login key Azure requires (port 22 is never opened) |
-| 1 data VM (`Standard_B1ms`) | Postgres and Redis containers |
+| PostgreSQL Flexible Server (`B_Standard_B1ms`, 32 GB) and its database | Managed Postgres: seven days of backups, no public address |
+| 1 Redis VM (`Standard_B1s`) | Redis container |
 | 2 app VMs (`Standard_B1s`) | `chattie` and `chattie-publisher` containers |
 
 ### What a VM does on first boot (`deploy/vm`)
 
 - `app.sh.tftpl`: installs Docker, pulls the image, writes the settings to
-  `/etc/chattie.env`, starts the two containers with `--restart always`.
-- `data.sh.tftpl`: installs Docker, starts Postgres and Redis.
+  `/etc/chattie.env`, starts the two containers with `--restart always`, and
+  installs the `chattie-psql` helper.
+- `redis.sh`: installs Docker and starts Redis.
 
 Terraform fills in the image name, addresses and passwords before sending the
-script to the VM.
+app script to the VM.
 
 ### Settings you can change
 
@@ -788,9 +882,11 @@ script to the VM.
 | `image` | `ghcr.io/aniruddha81/chattie-cloud:latest` | both |
 | `app_count` | `2` | both |
 | `region` | `us-east-1` | AWS |
+| `backup_days` | `1` | AWS |
 | `subscription_id` | none, required | Azure |
 | `location` | `eastus` | Azure |
-| `app_size`, `data_size` | `Standard_B1s`, `Standard_B1ms` | Azure |
+| `app_size`, `redis_size` | `Standard_B1s` | Azure |
+| `db_size` | `B_Standard_B1ms` | Azure |
 
 Set them with `-var name=value` for one run, or in `terraform.tfvars` inside
 the folder to keep them.

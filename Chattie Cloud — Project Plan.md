@@ -87,15 +87,15 @@ Room creation, membership changes, and deletion also need transactional writes p
 | Component | Local development | AWS | Azure |
 | --- | --- | --- | --- |
 | Go chat/API and web client | Compose, 3 app replicas | EC2 Auto Scaling group, 2+ VMs across two availability zones, behind Application Load Balancer | VM Scale Set, 2+ Linux VMs, behind Application Gateway or a Standard Load Balancer with TLS terminated on the VMs |
-| Durable database | Postgres container and migrations | RDS Postgres | Azure Database for PostgreSQL, or a deliberately temporary Postgres on a private data VM for the Azure demo |
-| Events and presence | Redis container | ElastiCache/Valkey, or Redis on a private EC2 instance if cost requires | Managed Redis if affordable; Redis on a private VM only for a disposable demo |
+| Durable database | Postgres container and migrations | RDS Postgres in private subnets, TLS required, automatic backups | Azure Database for PostgreSQL Flexible Server with private access, TLS required, automatic backups |
+| Events and presence | Redis container | Redis on a private EC2 instance; ElastiCache/Valkey when it needs to be managed | Redis on a private VM; managed Redis when it needs to be managed |
 | Outbox publisher | Worker container | Second service on each app VM | Second service on each app VM |
 | Authentication | Go module in chat app | Same app | Same app |
 | Secrets and configuration | `.env` file, never committed | Secrets Manager or SSM Parameter Store, read through the instance profile | Key Vault, read through the VM managed identity |
 | Study bot | Mock model first | Worker on a small EC2 instance + Bedrock + pgvector | Omit from independent Azure demo |
 | Observability | Structured logs, metrics, local dashboard | CloudWatch agent plus app metrics | Azure Monitor agent plus app metrics/Grafana if budget permits |
 
-Use a managed Azure database if the goal is surviving VM replacement. Postgres on a VM needs a separate managed disk, backups shipped off the VM, and recovery testing before making the same durability claim. Do not share the AWS database across clouds merely to make the UI appear unified.
+Postgres is a managed service in both clouds, so the data survives the loss of any VM and backups do not depend on one. Postgres never runs on a VM in the cloud environments. Redis may stay on a VM because it holds nothing durable: only live notifications and presence, which clients repair from Postgres. Do not share the AWS database across clouds merely to make the UI appear unified.
 
 ### How a VM runs the app
 

@@ -11,16 +11,17 @@ apt-get -o DPkg::Lock::Timeout=300 install -y docker.io
 
 docker pull ${image}
 
+# The managed database only accepts encrypted connections (sslmode=require).
 cat > /etc/chattie.env <<'EOF'
-DATABASE_URL=${database_url}
-REDIS_URL=${redis_url}
+DATABASE_URL=postgres://chattie:${db_password}@${db_host}:5432/chattie?sslmode=require&pool_max_conns=${db_pool}
+REDIS_URL=redis://${redis_host}:6379
 SESSION_SECRET=${session_secret}
 DRAIN_SECONDS=10
 EOF
 chmod 600 /etc/chattie.env
 
 # --restart always brings a container back after a crash or a VM reboot. It
-# also covers boot order: the app retries until the data VM is ready.
+# also covers boot order: the app retries until the database is ready.
 docker run -d --name chattie --restart always --stop-timeout 30 \
   --env-file /etc/chattie.env -e INSTANCE_ID="$(hostname)" \
   -p 8080:8080 ${image} serve
@@ -28,3 +29,13 @@ docker run -d --name chattie --restart always --stop-timeout 30 \
 docker run -d --name chattie-publisher --restart always \
   --env-file /etc/chattie.env -e INSTANCE_ID="$(hostname)" \
   ${image} publisher
+
+# A helper to look inside the database from this VM:
+#   chattie-psql -c "SELECT count(*) FROM messages"
+# Set DB_HOST to look at another server, such as a restored copy.
+cat > /usr/local/bin/chattie-psql <<'EOF'
+#!/bin/sh
+exec docker run --rm -i -e PGPASSWORD='${db_password}' postgres:18-alpine \
+  psql "host=$${DB_HOST:-${db_host}} user=chattie dbname=chattie sslmode=require" "$@"
+EOF
+chmod 700 /usr/local/bin/chattie-psql

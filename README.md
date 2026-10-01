@@ -27,8 +27,9 @@ image to `ghcr.io/aniruddha81/chattie-cloud`.
 ## Run it in the cloud
 
 [docs/deploy-guide.md](docs/deploy-guide.md) deploys the same system to AWS or
-Azure VMs with one `terraform apply`: a load balancer, two app VMs and one
-data VM, all running the same Docker containers as the local stack.
+Azure with one `terraform apply`: a load balancer, two app VMs running the
+same Docker containers as the local stack, a managed Postgres database (RDS
+or Azure Database for PostgreSQL) and a small Redis VM.
 
 ## How a message travels
 
