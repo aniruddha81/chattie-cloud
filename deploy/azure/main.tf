@@ -27,7 +27,7 @@ provider "azurerm" {
 }
 
 variable "subscription_id" {
-  description = "From: az account show --query id -o tsv"
+  description = "The Subscription ID shown under Subscriptions in the Azure portal"
 }
 
 variable "location" {

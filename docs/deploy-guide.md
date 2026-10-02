@@ -1,9 +1,13 @@
 # Deploying Chattie: the complete guide
 
 Everything from an empty GitHub account to a running distributed chat system
-on AWS and Azure, and back to zero cost. Follow it top to bottom. All commands
-are for PowerShell on Windows, run from the repository root unless a step says
-otherwise.
+on AWS and Azure, and back to zero cost. Follow it top to bottom.
+
+The terminal is used only where there is no button: Git, Docker, Terraform and
+the tests. Everything you look at or change inside a cloud is done by clicking
+in the [AWS console](https://console.aws.amazon.com) or the
+[Azure portal](https://portal.azure.com). Commands are for PowerShell on
+Windows, run from the repository root unless a step says otherwise.
 
 Contents:
 
@@ -25,11 +29,15 @@ Contents:
 
 ## 1. What you are building
 
-```text
-                       +--> app VM 1: chattie + chattie-publisher --+--> managed Postgres
-browser --> load       |                                            |    (RDS / Azure Database)
-            balancer --+                                            |
-            (port 80)  +--> app VM 2: chattie + chattie-publisher --+--> Redis VM
+```mermaid
+flowchart LR
+    browser([Browser]) --> lb[Load balancer<br/>port 80]
+    lb --> app1[App VM 1<br/>chattie + chattie-publisher]
+    lb --> app2[App VM 2<br/>chattie + chattie-publisher]
+    app1 --> pg[(Managed Postgres<br/>RDS / Azure Database)]
+    app1 --> redis[(Redis VM)]
+    app2 --> pg
+    app2 --> redis
 ```
 
 - **Load balancer.** The only thing reachable from the internet. It spreads
@@ -102,7 +110,7 @@ Start Docker Desktop and wait until it says it is running.
 | Docker Desktop | Runs the system on your machine |
 | Go | Runs the tests against a running system |
 | Terraform | Creates and deletes the cloud resources |
-| AWS CLI, Azure CLI | Sign Terraform in to each cloud, and let you inspect resources |
+| AWS CLI, Azure CLI | Sign Terraform in to each cloud (one command each). Nothing else |
 
 ---
 
@@ -250,14 +258,12 @@ aws configure
 | Default region name | `us-east-1` |
 | Default output format | `json` |
 
-Check it worked:
+The key is stored in `C:\Users\<you>\.aws\credentials`. Never put it in the
+repository. If it was typed wrong, `plan` in the next step says so.
 
-```powershell
-aws sts get-caller-identity
-```
-
-It prints your account number and `user/terraform`. The key is stored in
-`C:\Users\<you>\.aws\credentials`. Never put it in the repository.
+In the AWS console, set the region selector at the top right to **US East
+(N. Virginia)**. The console only shows resources in the selected region, so
+everything this guide tells you to look at is there.
 
 ### 6.3 Look before you create
 
@@ -314,14 +320,9 @@ between the two VMs:
 1..10 | ForEach-Object { curl.exe -s "$url/readyz"; "" }
 ```
 
-See what the load balancer thinks of each VM:
-
-```powershell
-$tg = aws elbv2 describe-target-groups --names chattie --query "TargetGroups[0].TargetGroupArn" --output text
-aws elbv2 describe-target-health --target-group-arn $tg --query "TargetHealthDescriptions[].[Target.Id,TargetHealth.State]" --output table
-```
-
-Both should say `healthy`.
+See what the load balancer thinks of each VM: AWS console, **EC2**, **Target
+Groups** (under *Load Balancing* in the left menu), click `chattie`,
+**Targets** tab. Both should say `Healthy`.
 
 ### 6.6 Use it
 
@@ -336,16 +337,12 @@ Remove-Item Env:CHATTIE_URLS
 
 ### 6.7 Get a shell on a VM
 
-List the VMs:
+AWS console, **EC2**, **Instances** lists the three VMs: `chattie-app-1`,
+`chattie-app-2` and `chattie-redis`.
 
-```powershell
-aws ec2 describe-instances --filters "Name=tag:Name,Values=chattie-*" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].[Tags[?Key=='Name']|[0].Value,InstanceId,PrivateIpAddress]" --output table
-```
-
-There is no SSH. To open a shell: AWS console, **EC2**, **Instances**, select
-a VM, **Connect**, **Session Manager** tab, **Connect**. A terminal opens in
-the browser. If the tab says the instance is not available, wait two minutes
-after boot and refresh.
+There is no SSH. To open a shell, select a VM, **Connect**, **Session
+Manager** tab, **Connect**. A terminal opens in the browser. If the tab says
+the instance is not available, wait two minutes after boot and refresh.
 
 Commands to run in that shell:
 
@@ -366,11 +363,10 @@ sudo chattie-psql -c "SELECT count(*) FILTER (WHERE published_at IS NULL) AS pen
 
 The first run takes a little longer because it downloads the Postgres client.
 
-See the database itself, including its backup setting:
-
-```powershell
-aws rds describe-db-instances --db-instance-identifier chattie --query "DBInstances[0].{status:DBInstanceStatus, version:EngineVersion, size:DBInstanceClass, backupDays:BackupRetentionPeriod, public:PubliclyAccessible}" --output table
-```
+See the database itself: AWS console, **RDS**, **Databases**, click
+`chattie`. The summary shows its status and size, **Connectivity & security**
+shows that it is not publicly accessible, and **Maintenance & backups** shows
+the backup setting.
 
 ### 6.8 Check your credit
 
@@ -387,30 +383,25 @@ The Azure credit expires first, so do not leave this part too late.
 
 ```powershell
 az login
-az account show --query "{name:name, id:id, state:state}" -o table
 ```
 
-A browser window opens to sign in. The table shows the subscription Terraform
-will use.
+A browser window opens to sign in. Back in the terminal it lists your
+subscriptions; press Enter to keep the one shown. This is the only `az`
+command in the guide.
 
 ### 7.2 Choose a region and VM sizes you are allowed to use
 
-Student subscriptions allow only a few regions. This usually lists them:
+Student subscriptions allow only a few regions. To see them: Azure portal,
+search for **Policy**, **Assignments**. Click the assignment whose name
+mentions allowed regions or locations; its **Parameters** list the regions
+you may use. If there is no such assignment, there is no restriction, and
+`eastus` is fine.
 
-```powershell
-az policy assignment list --query "[].parameters.listOfAllowedLocations.value" -o tsv
-```
-
-If it prints nothing, there is no restriction, and `eastus` is fine. Then
-check that the two VM sizes the deployment uses are available in your region
-(replace `eastus` if needed):
-
-```powershell
-az vm list-skus --location eastus --size Standard_B1 --all --query "[].{size:name, blocked:restrictions[0].reasonCode}" -o table
-```
-
-`Standard_B1s` should appear with nothing in the `blocked` column. If it is
-blocked, pick another size from the list and set it in the next step.
+Then check that the VM size the deployment uses is offered in your region:
+**Virtual machines**, **Create**, **Virtual machine**, choose the region,
+then **See all sizes** and search for `B1s`. If `B1s` is greyed out, note
+another small size that is not, and set it in the next step. Close the page
+without creating anything.
 
 The managed database can also be restricted by region. There is no quick
 check for it: if `apply` later refuses to create the database in your region,
@@ -418,13 +409,10 @@ choose another allowed region (see section 11).
 
 ### 7.3 Write your settings
 
-```powershell
-$id = az account show --query id -o tsv
-Set-Content deploy/azure/terraform.tfvars -Encoding ascii -Value "subscription_id = `"$id`"", "location        = `"eastus`""
-Get-Content deploy/azure/terraform.tfvars
-```
-
-The file should look like this. It is git-ignored.
+Azure portal, **Subscriptions**, click your subscription and copy its
+**Subscription ID**. In your editor, create the file
+`deploy/azure/terraform.tfvars` with these two lines, using your own ID and
+region. The file is git-ignored.
 
 ```hcl
 subscription_id = "00000000-0000-0000-0000-000000000000"
@@ -462,11 +450,9 @@ curl.exe -s "$url/readyz"
 1..10 | ForEach-Object { curl.exe -s "$url/readyz"; "" }
 ```
 
-The `instance` is `chattie-app-1` or `chattie-app-2`. List the VMs:
-
-```powershell
-az vm list -g chattie -d --query "[].{name:name, state:powerState, ip:privateIps}" -o table
-```
+The `instance` is `chattie-app-1` or `chattie-app-2`. To see everything
+Terraform created: Azure portal, **Resource groups**, `chattie`. Click a VM
+to see its status and private address.
 
 ### 7.6 Use it
 
@@ -480,36 +466,33 @@ Remove-Item Env:CHATTIE_URLS
 
 ### 7.7 Run commands on a VM
 
-There is no SSH. Azure can run a command on a VM for you. Define this helper
-once per terminal:
+There is no SSH. The portal can run a command on a VM for you: **Resource
+groups**, `chattie`, click a VM, **Operations**, **Run command**,
+**RunShellScript**. Paste the command, click **Run**, and the output appears
+below after about 30 seconds.
 
-```powershell
-function onvm($name, $command) {
-    az vm run-command invoke -g chattie -n $name --command-id RunShellScript --scripts $command --query "value[0].message" -o tsv
-}
-```
+Commands run as root, so no `sudo`. The box is not a live terminal: a command
+that keeps running, such as `docker logs -f`, never returns, so use `--tail`.
 
-Then (each call takes about 30 seconds; commands run as root, so no `sudo`):
+Commands to run there:
 
-```powershell
-onvm chattie-app-1 "docker ps"
-onvm chattie-app-1 "docker logs --tail 20 chattie"
-onvm chattie-app-1 "tail -n 30 /var/log/cloud-init-output.log"
-onvm chattie-redis "docker ps"
+```bash
+docker ps                                    # the containers on this VM
+docker logs --tail 20 chattie                # app log
+docker logs --tail 20 chattie-publisher      # publisher log
+tail -n 30 /var/log/cloud-init-output.log    # what the first-boot script did
 ```
 
 The database is not on a VM. Each app VM has a helper, `chattie-psql`, that
 runs a query against it (the first run downloads the Postgres client):
 
-```powershell
-onvm chattie-app-1 "chattie-psql -c 'SELECT id, room_id, sequence, content FROM messages ORDER BY id DESC LIMIT 10'"
+```bash
+chattie-psql -c "SELECT id, room_id, sequence, content FROM messages ORDER BY id DESC LIMIT 10"
 ```
 
-See the database itself:
-
-```powershell
-az postgres flexible-server list -g chattie --query "[].{name:name, state:state, version:version, size:sku.name, backupDays:backup.backupRetentionDays}" -o table
-```
+See the database itself: in the `chattie` resource group, click the
+PostgreSQL server (its name starts with `chattie-`). The overview shows its
+status, version and size, and **Backup and restore** shows the backups.
 
 ### 7.8 Check your credit
 
@@ -525,8 +508,8 @@ signed in as two users, ideally connected to different instances (the sidebar
 shows which; reload a window until they differ).
 
 The commands in `bash` blocks are the ones to run **on a VM**. On AWS, type
-them in a Session Manager shell with `sudo` in front. On Azure, wrap them:
-`onvm chattie-app-1 "docker stop chattie"`. Commands in `powershell` blocks
+them in a Session Manager shell with `sudo` in front (6.7). On Azure, paste
+them into the VM's **Run command** box (7.7). Commands in `powershell` blocks
 run on your own machine.
 
 ### 8.1 Messages cross VMs
@@ -545,8 +528,8 @@ docker stop chattie
 
 The window connected to that VM shows *reconnecting*, then connects to the
 other VM and still has every message. Before stopping, the container told its
-browsers to reconnect and waited ten seconds. On AWS, run the target-health
-command from 6.5 and see the VM turn `unhealthy`. Bring it back:
+browsers to reconnect and waited ten seconds. On AWS, open the **Targets**
+tab from 6.5 and see the VM turn `Unhealthy`. Bring it back:
 
 ```bash
 docker start chattie
@@ -598,21 +581,14 @@ from Postgres, without reloading the page.
 
 ### 8.5 Lose a whole VM
 
-AWS (use an instance ID from the list in 6.7):
+AWS: **EC2**, **Instances**, select `chattie-app-2`, **Instance state**,
+**Terminate (delete) instance**.
 
-```powershell
-aws ec2 terminate-instances --instance-ids i-0123456789abcdef0
-```
-
-Azure:
-
-```powershell
-az vm deallocate -g chattie -n chattie-app-2
-```
+Azure: **Resource groups**, `chattie`, click `chattie-app-2`, **Stop**.
 
 The chat keeps working on the remaining VM. To repair it: on AWS,
-`terraform -chdir=deploy/aws apply` creates a replacement; on Azure,
-`az vm start -g chattie -n chattie-app-2`.
+`terraform -chdir=deploy/aws apply` creates a replacement; on Azure, click
+**Start** on the same VM.
 
 ### 8.6 Scale out
 
@@ -627,18 +603,10 @@ three minutes, `/readyz` shows three instance names. A later `apply` without
 
 ### 8.7 Restart the database
 
-AWS:
+AWS: **RDS**, **Databases**, select `chattie`, **Actions**, **Reboot**.
 
-```powershell
-aws rds reboot-db-instance --db-instance-identifier chattie --query "DBInstance.DBInstanceStatus"
-```
-
-Azure:
-
-```powershell
-$db = az postgres flexible-server list -g chattie --query "[0].name" -o tsv
-az postgres flexible-server restart -g chattie -n $db
-```
+Azure: **Resource groups**, `chattie`, click the PostgreSQL server,
+**Restart**.
 
 While the database is down, sending fails and both app VMs fail `/readyz`,
 so the load balancer has nowhere to send traffic. Postgres is the one part
@@ -656,25 +624,29 @@ app. The chat containers and the publishers reconnect on their own.
 A backup you have never restored is only a hope. This takes a snapshot,
 restores it as a second database and checks the data is there.
 
-Take the snapshot:
+Everything here is in the AWS console under **RDS**.
 
-```powershell
-aws rds create-db-snapshot --db-instance-identifier chattie --db-snapshot-identifier chattie-test --query "DBSnapshot.Status"
-aws rds wait db-snapshot-available --db-snapshot-identifier chattie-test
-```
+Take the snapshot: **Databases**, select `chattie`, **Actions**, **Take
+snapshot**. Name it `chattie-test`. Open **Snapshots** and wait until its
+status is `Available`.
 
-Restore it as a new database next to the real one:
+Restore it as a new database next to the real one: **Snapshots**, select
+`chattie-test`, **Actions**, **Restore snapshot**. Set these and leave the
+rest alone:
 
-```powershell
-$sg = aws ec2 describe-security-groups --filters "Name=group-name,Values=chattie-db" --query "SecurityGroups[0].GroupId" --output text
-aws rds restore-db-instance-from-db-snapshot --db-instance-identifier chattie-restored --db-snapshot-identifier chattie-test --db-instance-class db.t4g.micro --db-subnet-group-name chattie --vpc-security-group-ids $sg --no-publicly-accessible --query "DBInstance.DBInstanceStatus"
-aws rds wait db-instance-available --db-instance-identifier chattie-restored
-aws rds describe-db-instances --db-instance-identifier chattie-restored --query "DBInstances[0].Endpoint.Address" --output text
-```
+| Setting | Value |
+| --- | --- |
+| DB instance identifier | `chattie-restored` |
+| DB instance class | Burstable classes, `db.t4g.micro` |
+| Virtual private cloud (VPC) | `chattie` |
+| DB subnet group | `chattie` |
+| Public access | No |
+| Existing VPC security groups | `chattie-db` (remove `default`) |
 
-The last command prints the restored database's address. On an app VM, run
-the same counts against both databases and compare (put the address in place
-of `<address>`):
+Click **Restore DB instance** and wait until `chattie-restored` shows
+`Available` under **Databases**. Click it and copy the **Endpoint** from the
+**Connectivity & security** tab. On an app VM, run the same counts against
+both databases and compare (put the endpoint in place of `<address>`):
 
 ```bash
 sudo chattie-psql -tA -c "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM rooms), (SELECT count(*) FROM messages), (SELECT max(last_sequence) FROM rooms)"
@@ -684,13 +656,13 @@ sudo DB_HOST=<address> chattie-psql -tA -c "SELECT (SELECT count(*) FROM users),
 The numbers match, apart from anything sent after the snapshot.
 
 **Delete the copy and the snapshot.** Terraform did not create them, so
-`destroy` cannot remove them, and they would block it and keep billing:
+`destroy` cannot remove them, and they would block it and keep billing.
 
-```powershell
-aws rds delete-db-instance --db-instance-identifier chattie-restored --skip-final-snapshot --delete-automated-backups --query "DBInstance.DBInstanceStatus"
-aws rds wait db-instance-deleted --db-instance-identifier chattie-restored
-aws rds delete-db-snapshot --db-snapshot-identifier chattie-test --query "DBSnapshot.Status"
-```
+1. **Databases**, select `chattie-restored`, **Actions**, **Delete**. Untick
+   **Create final snapshot** and **Retain automated backups**, tick the
+   acknowledgement, type `delete me` and confirm. Wait until it disappears
+   from the list.
+2. **Snapshots**, select `chattie-test`, **Actions**, **Delete snapshot**.
 
 ---
 
@@ -745,23 +717,18 @@ terraform -chdir=deploy/azure destroy
 Type `yes`. Everything is deleted, including the database and its backups.
 It takes about ten minutes, most of it the database.
 
-Confirm nothing is left on AWS. All four commands should print `[]`:
+Confirm nothing is left on AWS. In the console, with the region set to **US
+East (N. Virginia)**, these four pages should be empty:
 
-```powershell
-aws ec2 describe-instances --filters "Name=tag:Name,Values=chattie-*" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId"
-aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerName"
-aws rds describe-db-instances --query "DBInstances[].DBInstanceIdentifier"
-aws rds describe-db-snapshots --snapshot-type manual --query "DBSnapshots[].DBSnapshotIdentifier"
-```
+- **EC2**, **Instances**. Instances marked `Terminated` are already gone and
+  drop off the list within an hour.
+- **EC2**, **Load Balancers**.
+- **RDS**, **Databases**.
+- **RDS**, **Snapshots**, **Manual** tab.
 
-Confirm nothing is left on Azure. This should print `false`:
-
-```powershell
-az group exists --name chattie
-```
-
-Azure may keep a group named `NetworkWatcherRG`. It is created by Azure
-itself and costs nothing.
+Confirm nothing is left on Azure: in the portal, **Resource groups** no
+longer lists `chattie`. Azure may keep a group named `NetworkWatcherRG`. It
+is created by Azure itself and costs nothing.
 
 Look at the billing page of each cloud the next day to confirm the cost
 stopped growing.
@@ -785,9 +752,9 @@ will easily outlast your learning.
 | `502` or `503` for more than six minutes after `apply` | The first-boot script failed. Read `/var/log/cloud-init-output.log` on an app VM (6.7 or 7.7). |
 | That log ends with `docker pull` and `denied` or `unauthorized` | The image is still private. Do 3.4, then replace the VMs (see below). |
 | That log ends with `manifest unknown` | The image tag does not exist. Check the tag in the Actions run summary. |
-| `/readyz` says `postgres unavailable` | The database is restarting or not ready yet. Check its status with the `describe-db-instances` command in 6.7 or the `flexible-server list` command in 7.7. |
+| `/readyz` says `postgres unavailable` | The database is restarting or not ready yet. Check its status on its console page (end of 6.7 or 7.7). |
 | AWS: `backup retention period exceeds the maximum available to free tier customers` | Your account may not keep backups. Apply with `-var backup_days=0`. Experiment 8.8 still works, because it takes its own snapshot. |
-| AWS: `destroy` fails on the subnet group or security group | A restored database from experiment 8.8 still exists. Run the delete commands at the end of 8.8, then `destroy` again. |
+| AWS: `destroy` fails on the subnet group or security group | A restored database from experiment 8.8 still exists. Do the two delete steps at the end of 8.8, then `destroy` again. |
 | Azure: the database fails with a message that the location or subscription is restricted | The database service is not offered to your subscription in that region. Change `location` to another allowed region, run `destroy`, then `apply`. |
 | AWS: `VcpuLimitExceeded` | Your account allows fewer VMs. Use `-var app_count=1`. |
 | AWS: `InvalidClientTokenId` or `AuthFailure` | The access key is wrong. Run `aws configure` again. |
