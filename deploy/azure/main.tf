@@ -32,7 +32,7 @@ variable "subscription_id" {
 
 variable "location" {
   description = "A region your subscription may use. Student subscriptions allow only a few."
-  default     = "eastus"
+  default     = "centralindia"
 }
 
 variable "app_count" {

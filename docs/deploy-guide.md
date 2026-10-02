@@ -255,15 +255,16 @@ aws configure
 | --- | --- |
 | AWS Access Key ID | the key ID from the page |
 | AWS Secret Access Key | the secret from the page |
-| Default region name | `us-east-1` |
+| Default region name | `ap-south-1` |
 | Default output format | `json` |
 
 The key is stored in `C:\Users\<you>\.aws\credentials`. Never put it in the
 repository. If it was typed wrong, `plan` in the next step says so.
 
-In the AWS console, set the region selector at the top right to **US East
-(N. Virginia)**. The console only shows resources in the selected region, so
-everything this guide tells you to look at is there.
+In the AWS console, set the region selector at the top right to **Asia
+Pacific (Mumbai)**, which is `ap-south-1`. The console only shows resources
+in the selected region, so everything this guide tells you to look at is
+there.
 
 ### 6.3 Look before you create
 
@@ -289,7 +290,7 @@ Apply complete! Resources: 28 added, 0 changed, 0 destroyed.
 
 Outputs:
 
-url = "http://chattie-123456789.us-east-1.elb.amazonaws.com"
+url = "http://chattie-123456789.ap-south-1.elb.amazonaws.com"
 ```
 
 **From this moment credit is being spent.** Section 10 stops it.
@@ -394,8 +395,10 @@ command in the guide.
 Student subscriptions allow only a few regions. To see them: Azure portal,
 search for **Policy**, **Assignments**. Click the assignment whose name
 mentions allowed regions or locations; its **Parameters** list the regions
-you may use. If there is no such assignment, there is no restriction, and
-`eastus` is fine.
+you may use. This guide uses `centralindia` (Central India, in Pune), the
+Azure region nearest to AWS Mumbai. If it is in the list, or there is no such
+assignment and so no restriction, keep it. Otherwise pick a region from the
+list and use its name wherever this guide says `centralindia`.
 
 Then check that the VM size the deployment uses is offered in your region:
 **Virtual machines**, **Create**, **Virtual machine**, choose the region,
@@ -416,7 +419,7 @@ region. The file is git-ignored.
 
 ```hcl
 subscription_id = "00000000-0000-0000-0000-000000000000"
-location        = "eastus"
+location        = "centralindia"
 ```
 
 To use other VM sizes, add lines such as `app_size = "Standard_B2s"` or
@@ -434,7 +437,7 @@ terraform -chdir=deploy/azure apply
 ten minutes, most of it waiting for the database, and prints:
 
 ```text
-url = "http://chattie-ab12cd.eastus.cloudapp.azure.com"
+url = "http://chattie-ab12cd.centralindia.cloudapp.azure.com"
 ```
 
 **From this moment credit is being spent.**
@@ -717,8 +720,8 @@ terraform -chdir=deploy/azure destroy
 Type `yes`. Everything is deleted, including the database and its backups.
 It takes about ten minutes, most of it the database.
 
-Confirm nothing is left on AWS. In the console, with the region set to **US
-East (N. Virginia)**, these four pages should be empty:
+Confirm nothing is left on AWS. In the console, with the region set to
+**Asia Pacific (Mumbai)**, these four pages should be empty:
 
 - **EC2**, **Instances**. Instances marked `Terminated` are already gone and
   drop off the list within an hour.
@@ -848,10 +851,10 @@ app script to the VM.
 | --- | --- | --- |
 | `image` | `ghcr.io/aniruddha81/chattie-cloud:latest` | both |
 | `app_count` | `2` | both |
-| `region` | `us-east-1` | AWS |
+| `region` | `ap-south-1` | AWS |
 | `backup_days` | `1` | AWS |
 | `subscription_id` | none, required | Azure |
-| `location` | `eastus` | Azure |
+| `location` | `centralindia` | Azure |
 | `app_size`, `redis_size` | `Standard_B1s` | Azure |
 | `db_size` | `B_Standard_B1ms` | Azure |
 
