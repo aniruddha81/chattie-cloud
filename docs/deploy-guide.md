@@ -402,9 +402,12 @@ list and use its name wherever this guide says `centralindia`.
 
 Then check that the VM size the deployment uses is offered in your region:
 **Virtual machines**, **Create**, **Virtual machine**, choose the region,
-then **See all sizes** and search for `B1s`. If `B1s` is greyed out, note
+then **See all sizes** and search for `B2ats_v2`. If it is greyed out, note
 another small size that is not, and set it in the next step. Close the page
 without creating anything.
+
+Student subscriptions also allow only 6 vCPUs per region. The three VMs have
+2 each, so the default deployment uses all of it.
 
 The managed database can also be restricted by region. There is no quick
 check for it: if `apply` later refuses to create the database in your region,
@@ -422,8 +425,8 @@ subscription_id = "00000000-0000-0000-0000-000000000000"
 location        = "centralindia"
 ```
 
-To use other VM sizes, add lines such as `app_size = "Standard_B2s"` or
-`redis_size = "Standard_B2s"`.
+To use other VM sizes, add lines such as `app_size = "Standard_B2ts_v2"` or
+`redis_size = "Standard_B2ts_v2"`.
 
 ### 7.4 Create it
 
@@ -602,7 +605,10 @@ terraform -chdir=deploy/aws apply -var app_count=3
 Terraform adds one VM and registers it with the load balancer. After about
 three minutes, `/readyz` shows three instance names. A later `apply` without
 `-var` goes back to two. To keep three, put `app_count = 3` in
-`deploy/aws/terraform.tfvars` (or the Azure one).
+`deploy/aws/terraform.tfvars`.
+
+Do this one on AWS. On an Azure student subscription a third app VM would
+need 8 vCPUs, and the limit is 6.
 
 ### 8.7 Restart the database
 
@@ -763,6 +769,7 @@ will easily outlast your learning.
 | AWS: `InvalidClientTokenId` or `AuthFailure` | The access key is wrong. Run `aws configure` again. |
 | Azure: `RequestDisallowedByAzure` or `not allowed by policy` | The region is not allowed for your subscription. Change `location` (7.2). |
 | Azure: `SkuNotAvailable` | The VM size is not offered there. Set `app_size` or `redis_size` (7.3). |
+| Azure: `QuotaExceeded` on `Total Regional Cores` | The VMs need more vCPUs than your subscription allows in that region (6 for students). Use `-var app_count=1`, or delete other VMs in that region. |
 | Azure: `apply` is slow the first time | Terraform is registering resource providers on a new subscription. Let it finish. |
 | `Error acquiring the state lock` | A previous Terraform run was interrupted. Run `terraform -chdir=<folder> force-unlock <ID>` with the ID from the message. |
 | Session Manager lists no instances | The VM's agent needs two minutes after boot. Refresh. |
@@ -832,8 +839,8 @@ If a `destroy` fails halfway, run it again. It continues where it stopped.
 | 3 network interfaces | One per VM. The Redis VM has the fixed address `10.1.0.10` |
 | 2 random passwords, 1 key | Database password, cookie secret, and the login key Azure requires (port 22 is never opened) |
 | PostgreSQL Flexible Server (`B_Standard_B1ms`, 32 GB) and its database | Managed Postgres: seven days of backups, no public address |
-| 1 Redis VM (`Standard_B1s`) | Redis container |
-| 2 app VMs (`Standard_B1s`) | `chattie` and `chattie-publisher` containers |
+| 1 Redis VM (`Standard_B2ats_v2`) | Redis container |
+| 2 app VMs (`Standard_B2ats_v2`) | `chattie` and `chattie-publisher` containers |
 
 ### What a VM does on first boot (`deploy/vm`)
 
@@ -855,7 +862,7 @@ app script to the VM.
 | `backup_days` | `1` | AWS |
 | `subscription_id` | none, required | Azure |
 | `location` | `centralindia` | Azure |
-| `app_size`, `redis_size` | `Standard_B1s` | Azure |
+| `app_size`, `redis_size` | `Standard_B2ats_v2` | Azure |
 | `db_size` | `B_Standard_B1ms` | Azure |
 
 Set them with `-var name=value` for one run, or in `terraform.tfvars` inside

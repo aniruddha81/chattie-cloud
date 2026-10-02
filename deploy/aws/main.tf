@@ -214,7 +214,7 @@ resource "aws_db_instance" "main" {
 # ---------- VMs ----------
 
 data "aws_ssm_parameter" "ubuntu" {
-  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+  name = "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 resource "random_password" "session" {

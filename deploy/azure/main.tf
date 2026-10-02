@@ -40,12 +40,14 @@ variable "app_count" {
   default     = 2
 }
 
+# 2 vCPUs and 1 GB each. Student subscriptions allow 6 vCPUs per region, so
+# three VMs of this size use all of it.
 variable "app_size" {
-  default = "Standard_B1s"
+  default = "Standard_B2ats_v2"
 }
 
 variable "redis_size" {
-  default = "Standard_B1s"
+  default = "Standard_B2ats_v2"
 }
 
 variable "db_size" {
@@ -262,7 +264,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   name                          = "chattie-${random_string.suffix.result}"
   resource_group_name           = azurerm_resource_group.main.name
   location                      = azurerm_resource_group.main.location
-  version                       = "17"
+  version                       = "18"
   sku_name                      = var.db_size
   storage_mb                    = 32768
   backup_retention_days         = 7
@@ -314,7 +316,7 @@ resource "azurerm_linux_virtual_machine" "redis" {
   }
   source_image_reference {
     publisher = "Canonical"
-    offer     = "ubuntu-24_04-lts"
+    offer     = "ubuntu-26_04-lts"
     sku       = "server"
     version   = "latest"
   }
@@ -352,7 +354,7 @@ resource "azurerm_linux_virtual_machine" "app" {
   }
   source_image_reference {
     publisher = "Canonical"
-    offer     = "ubuntu-24_04-lts"
+    offer     = "ubuntu-26_04-lts"
     sku       = "server"
     version   = "latest"
   }
