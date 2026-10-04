@@ -55,7 +55,7 @@ flowchart LR
 How the image gets there:
 
 ```text
-git push --> GitHub Actions: test, build image --> ghcr.io --> each app VM pulls it
+git push to release --> GitHub Actions: test, build image --> ghcr.io --> each app VM pulls it
 ```
 
 Nothing is built on your machine. AWS and Azure are two separate copies of the
@@ -136,16 +136,20 @@ git commit -m "Chattie Cloud"
 git branch -M main
 git remote add origin https://github.com/aniruddha81/chattie-cloud.git
 git push -u origin main
+git push origin main:release
 ```
 
 `git status` shows what will be committed. Make sure no `.tfstate` or
 `.tfvars` file is listed. The first push opens a browser window to sign in to
 GitHub.
 
+`main` is where you work. `release` is the branch that builds: the last line
+copies `main` to `release`, and only a push to `release` starts the build.
+
 ### 3.3 Watch the build
 
-Open the repository on GitHub and click the **Actions** tab. A run named `CI`
-starts by itself. It has two jobs, defined in `.github/workflows/ci.yml`:
+Open the repository on GitHub and click the **Actions** tab. The push to
+`release` started a run named `CI`. It has two jobs, defined in `.github/workflows/ci.yml`:
 
 1. **test**: starts the whole system on GitHub's machine with Docker Compose
    and runs the integration tests against it, including one that stops Redis.
@@ -678,21 +682,24 @@ The numbers match, apart from anything sent after the snapshot.
    ```bash
    git add .
    git commit -m "Describe the change"
-   git push
+   git push origin main
+   git push origin main:release
    ```
+
+   Only the push to `release` builds a new image. Pushing `main` alone changes
+   nothing in the cloud.
 
 2. Wait for the `CI` run on GitHub to turn green.
-3. Find the image tag. It is the first seven characters of the commit ID:
+3. Apply with the new image. Its tag is the first seven characters of the
+   commit ID:
 
    ```bash
-   git rev-parse --short=7 HEAD
+   tag=$(git rev-parse --short=7 HEAD)
+   terraform -chdir=deploy/aws apply -var image=ghcr.io/aniruddha81/chattie-cloud:$tag
    ```
 
-4. Apply with that tag:
-
-   ```bash
-   terraform -chdir=deploy/aws apply -var image=ghcr.io/aniruddha81/chattie-cloud:abc1234
-   ```
+4. After about three minutes, reload the chat with Ctrl+F5 so the browser
+   fetches the new page instead of its cached copy.
 
 Terraform replaces the app VMs with new ones that pull the new image. They are
 replaced together, so the chat is unreachable for a few minutes. Messages are

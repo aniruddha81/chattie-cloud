@@ -1,5 +1,6 @@
-# Tests every push and pull request. On main, also builds the Docker image and
-# publishes it to GitHub's container registry, where the cloud VMs pull it from.
+# Tests every push to release and every pull request. On a push, also builds
+# the Docker image and publishes it to GitHub's container registry, where the
+# cloud VMs pull it from.
 
 name: CI
 

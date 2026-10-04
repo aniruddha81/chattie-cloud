@@ -238,10 +238,21 @@ function merge(m, live) {
 // A message keeps one client_message_id for its whole life. Retries reuse it,
 // so the server stores the message once however many times it is sent.
 function send(roomId, content) {
-  const id = crypto.randomUUID();
+  const id = uuid();
   pending.set(id, { room_id: roomId, content });
   transmit(id);
   showMessages();
+}
+
+// uuid returns a random version 4 UUID. crypto.randomUUID would be shorter,
+// but browsers only offer it over HTTPS or on localhost, and the cloud
+// deployments are plain HTTP.
+function uuid() {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 function transmit(id) {
