@@ -6,8 +6,8 @@ on AWS and Azure, and back to zero cost. Follow it top to bottom.
 The terminal is used only where there is no button: Git, Docker, Terraform and
 the tests. Everything you look at or change inside a cloud is done by clicking
 in the [AWS console](https://console.aws.amazon.com) or the
-[Azure portal](https://portal.azure.com). Commands are for PowerShell on
-Windows, run from the repository root unless a step says otherwise.
+[Azure portal](https://portal.azure.com). Commands are for Bash (Git Bash or
+MSYS2 on Windows), run from the repository root unless a step says otherwise.
 
 Contents:
 
@@ -81,7 +81,7 @@ nothing.
 You need accounts on [GitHub](https://github.com), AWS and Azure, and these
 tools:
 
-```powershell
+```bash
 winget install Git.Git
 winget install Docker.DockerDesktop
 winget install GoLang.Go
@@ -93,7 +93,7 @@ winget install Microsoft.AzureCLI
 Skip any you already have. **Close the terminal and open a new one**, then
 check that each answers:
 
-```powershell
+```bash
 git --version
 docker --version
 go version
@@ -129,7 +129,7 @@ name in three places: the `image` variable in `deploy/aws/main.tf` and
 
 ### 3.2 Push the code
 
-```powershell
+```bash
 git add .
 git status
 git commit -m "Chattie Cloud"
@@ -169,7 +169,7 @@ once:
 
 Check that anyone can pull it:
 
-```powershell
+```bash
 docker logout ghcr.io
 docker pull ghcr.io/aniruddha81/chattie-cloud:latest
 ```
@@ -183,7 +183,7 @@ It should end with `Status: Downloaded newer image`.
 This is free and shows you what a healthy system looks like before you pay
 for one.
 
-```powershell
+```bash
 docker compose -f deploy/local/compose.yaml up -d
 docker compose -f deploy/local/compose.yaml ps
 ```
@@ -195,13 +195,13 @@ chat. The sidebar shows which instance each window is connected to.
 
 Run the tests against it:
 
-```powershell
+```bash
 go test -p 1 -vet=off -tags integration ./tests/integration/
 ```
 
 Stop it, keeping the data, or stop it and delete the data:
 
-```powershell
+```bash
 docker compose -f deploy/local/compose.yaml down
 docker compose -f deploy/local/compose.yaml down -v
 ```
@@ -247,7 +247,7 @@ Terraform needs credentials to act as you.
 
 ### 6.2 Sign in from the terminal
 
-```powershell
+```bash
 aws configure
 ```
 
@@ -268,7 +268,7 @@ there.
 
 ### 6.3 Look before you create
 
-```powershell
+```bash
 terraform -chdir=deploy/aws init
 terraform -chdir=deploy/aws plan
 ```
@@ -278,7 +278,7 @@ yet. Section 13 lists what each of those resources is.
 
 ### 6.4 Create it
 
-```powershell
+```bash
 terraform -chdir=deploy/aws apply
 ```
 
@@ -303,9 +303,9 @@ the load balancer answers `502` or `503`.
 
 Save the URL in a variable and ask who is ready:
 
-```powershell
-$url = terraform -chdir=deploy/aws output -raw url
-curl.exe -s "$url/readyz"
+```bash
+url=$(terraform -chdir=deploy/aws output -raw url)
+curl -s "$url/readyz"
 ```
 
 When it is up you get:
@@ -317,8 +317,8 @@ When it is up you get:
 Ask ten times and watch the `instance` change as the load balancer alternates
 between the two VMs:
 
-```powershell
-1..10 | ForEach-Object { curl.exe -s "$url/readyz"; "" }
+```bash
+for i in $(seq 10); do curl -s "$url/readyz"; echo; done
 ```
 
 See what the load balancer thinks of each VM: AWS console, **EC2**, **Target
@@ -330,10 +330,8 @@ Groups** (under *Load Balancing* in the left menu), click `chattie`,
 Open the URL in two browser windows, create two accounts and chat. Then run
 the tests against the cloud:
 
-```powershell
-$env:CHATTIE_URLS = "$url,$url"
-go test -p 1 -vet=off -tags integration -count=1 ./tests/integration/
-Remove-Item Env:CHATTIE_URLS
+```bash
+CHATTIE_URLS="$url,$url" go test -p 1 -vet=off -tags integration -count=1 ./tests/integration/
 ```
 
 ### 6.7 Get a shell on a VM
@@ -382,7 +380,7 @@ The Azure credit expires first, so do not leave this part too late.
 
 ### 7.1 Sign in
 
-```powershell
+```bash
 az login
 ```
 
@@ -430,7 +428,7 @@ To use other VM sizes, add lines such as `app_size = "Standard_B2ts_v2"` or
 
 ### 7.4 Create it
 
-```powershell
+```bash
 terraform -chdir=deploy/azure init
 terraform -chdir=deploy/azure plan
 terraform -chdir=deploy/azure apply
@@ -450,10 +448,10 @@ url = "http://chattie-ab12cd.centralindia.cloudapp.azure.com"
 As on AWS, the VMs need about three minutes to install Docker and pull the
 image.
 
-```powershell
-$url = terraform -chdir=deploy/azure output -raw url
-curl.exe -s "$url/readyz"
-1..10 | ForEach-Object { curl.exe -s "$url/readyz"; "" }
+```bash
+url=$(terraform -chdir=deploy/azure output -raw url)
+curl -s "$url/readyz"
+for i in $(seq 10); do curl -s "$url/readyz"; echo; done
 ```
 
 The `instance` is `chattie-app-1` or `chattie-app-2`. To see everything
@@ -464,10 +462,8 @@ to see its status and private address.
 
 Open the URL in two browser windows and chat, then run the tests:
 
-```powershell
-$env:CHATTIE_URLS = "$url,$url"
-go test -p 1 -vet=off -tags integration -count=1 ./tests/integration/
-Remove-Item Env:CHATTIE_URLS
+```bash
+CHATTIE_URLS="$url,$url" go test -p 1 -vet=off -tags integration -count=1 ./tests/integration/
 ```
 
 ### 7.7 Run commands on a VM
@@ -513,10 +509,10 @@ This is the point of the project. Keep two browser windows open on the chat,
 signed in as two users, ideally connected to different instances (the sidebar
 shows which; reload a window until they differ).
 
-The commands in `bash` blocks are the ones to run **on a VM**. On AWS, type
+Commands that a step says to run on a VM go **on that VM**. On AWS, type
 them in a Session Manager shell with `sudo` in front (6.7). On Azure, paste
-them into the VM's **Run command** box (7.7). Commands in `powershell` blocks
-run on your own machine.
+them into the VM's **Run command** box (7.7). The other commands (`terraform`
+and the `curl` loop) run on your own machine.
 
 ### 8.1 Messages cross VMs
 
@@ -598,7 +594,7 @@ The chat keeps working on the remaining VM. To repair it: on AWS,
 
 ### 8.6 Scale out
 
-```powershell
+```bash
 terraform -chdir=deploy/aws apply -var app_count=3
 ```
 
@@ -621,8 +617,8 @@ While the database is down, sending fails and both app VMs fail `/readyz`,
 so the load balancer has nowhere to send traffic. Postgres is the one part
 that everything depends on. Watch it come back:
 
-```powershell
-1..30 | ForEach-Object { curl.exe -s -o NUL -w "%{http_code} " "$url/readyz"; Start-Sleep 2 }
+```bash
+for i in $(seq 30); do curl -s -o /dev/null -w "%{http_code} " "$url/readyz"; sleep 2; done
 ```
 
 After a minute or so the answers return to `200` without anyone touching the
@@ -679,7 +675,7 @@ The numbers match, apart from anything sent after the snapshot.
 
 1. Change the code, then push:
 
-   ```powershell
+   ```bash
    git add .
    git commit -m "Describe the change"
    git push
@@ -688,13 +684,13 @@ The numbers match, apart from anything sent after the snapshot.
 2. Wait for the `CI` run on GitHub to turn green.
 3. Find the image tag. It is the first seven characters of the commit ID:
 
-   ```powershell
+   ```bash
    git rev-parse --short=7 HEAD
    ```
 
 4. Apply with that tag:
 
-   ```powershell
+   ```bash
    terraform -chdir=deploy/aws apply -var image=ghcr.io/aniruddha81/chattie-cloud:abc1234
    ```
 
@@ -718,7 +714,7 @@ cloud what should exist.
 
 Do this whenever you stop for the day. Bringing it back later is one `apply`.
 
-```powershell
+```bash
 terraform -chdir=deploy/aws destroy
 terraform -chdir=deploy/azure destroy
 ```
@@ -754,7 +750,7 @@ will easily outlast your learning.
 
 | What you see | Likely cause and fix |
 | --- | --- |
-| `terraform`, `aws` or `az` is not recognized | Open a new terminal after installing. |
+| `terraform`, `aws` or `az`: command not found | Open a new terminal after installing. In MSYS2, the Windows `PATH` is only visible if the shell was started with `-use-full-path` (or `MSYS2_PATH_TYPE=inherit`). |
 | `git push` is rejected | The GitHub repository was created with a README. Create it empty, or run `git pull --rebase origin main` first. |
 | The `CI` run fails in *Integration and failure tests* | Read the *Show container logs* step. Run the same tests locally (section 4) to reproduce. |
 | The `image` job fails with `denied` | Usually a package named `chattie-cloud` already exists under your account from another repository. Delete it under **Packages**, then re-run the job. |
@@ -777,7 +773,7 @@ will easily outlast your learning.
 To replace the app VMs after fixing something (for example after making the
 image public), force Terraform to recreate them:
 
-```powershell
+```bash
 terraform -chdir=deploy/aws apply -replace="aws_instance.app[0]" -replace="aws_instance.app[1]"
 terraform -chdir=deploy/azure apply -replace="azurerm_linux_virtual_machine.app[0]" -replace="azurerm_linux_virtual_machine.app[1]"
 ```
@@ -792,19 +788,19 @@ If a `destroy` fails halfway, run it again. It continues where it stopped.
 2. Delete the AWS access key: IAM, **Users**, `terraform`, **Security
    credentials**, delete the key. Then remove it from your machine:
 
-   ```powershell
-   Remove-Item $HOME\.aws\credentials
+   ```bash
+   rm "$(cygpath "$USERPROFILE")/.aws/credentials"
    ```
 
 3. Sign out of Azure:
 
-   ```powershell
+   ```bash
    az logout
    ```
 
 4. Stop the local stack and delete its data:
 
-   ```powershell
+   ```bash
    docker compose -f deploy/local/compose.yaml down -v
    ```
 
@@ -870,7 +866,7 @@ the folder to keep them.
 
 ### Command summary
 
-```powershell
+```bash
 # local
 docker compose -f deploy/local/compose.yaml up -d
 docker compose -f deploy/local/compose.yaml down
@@ -888,6 +884,5 @@ terraform -chdir=deploy/azure output -raw url
 terraform -chdir=deploy/azure destroy
 
 # tests against any running system
-$env:CHATTIE_URLS = "$url,$url"
-go test -p 1 -vet=off -tags integration -count=1 ./tests/integration/
+CHATTIE_URLS="$url,$url" go test -p 1 -vet=off -tags integration -count=1 ./tests/integration/
 ```
